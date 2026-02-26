@@ -23,3 +23,34 @@ add_custom_target(check_no_violations
   COMMENT "Running plugin on test_no_violations.cpp (expect no warnings)"
   VERBATIM
 )
+
+# ---------------------------------------------------------------------------
+# Generate test_compile_commands.json for IDE/debugger integration.
+# file(GENERATE) supports generator expressions, so $<TARGET_FILE:ScIntAssignChecker>
+# resolves to the actual .so path at cmake generation time.
+# After (re)configuring, run:  python3 .vscode/gen_launch.py
+# ---------------------------------------------------------------------------
+set(_plugin_cmd "${CLANG_BINARY} -std=c++17 -fsyntax-only")
+string(APPEND _plugin_cmd " -Xclang -load -Xclang $<TARGET_FILE:ScIntAssignChecker>")
+string(APPEND _plugin_cmd " -Xclang -add-plugin -Xclang sc-int-assign-checker")
+string(APPEND _plugin_cmd " -I${SYSTEMC_INCLUDE_DIR}")
+
+string(CONCAT _compdb_content
+  "[\n"
+  "  {\n"
+  "    \"directory\": \"${CMAKE_BINARY_DIR}\",\n"
+  "    \"command\": \"${_plugin_cmd} ${CMAKE_CURRENT_SOURCE_DIR}/test_basic_violations.cpp\",\n"
+  "    \"file\": \"${CMAKE_CURRENT_SOURCE_DIR}/test_basic_violations.cpp\"\n"
+  "  },\n"
+  "  {\n"
+  "    \"directory\": \"${CMAKE_BINARY_DIR}\",\n"
+  "    \"command\": \"${_plugin_cmd} ${CMAKE_CURRENT_SOURCE_DIR}/test_no_violations.cpp\",\n"
+  "    \"file\": \"${CMAKE_CURRENT_SOURCE_DIR}/test_no_violations.cpp\"\n"
+  "  }\n"
+  "]\n"
+)
+
+file(GENERATE
+  OUTPUT "${CMAKE_BINARY_DIR}/test_compile_commands.json"
+  CONTENT "${_compdb_content}"
+)
