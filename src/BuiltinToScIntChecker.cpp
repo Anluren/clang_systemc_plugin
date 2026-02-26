@@ -26,8 +26,7 @@ bool ScIntAssignVisitor::isScIntOrUintClass(const CXXRecordDecl *RD) {
   if (!RD->hasDefinition())
     return false;
   for (const auto &Base : RD->bases()) {
-    const auto *BaseRD =
-        Base.getType()->getAsCXXRecordDecl();
+    const auto *BaseRD = Base.getType()->getAsCXXRecordDecl();
     if (isScIntOrUintClass(BaseRD))
       return true;
   }
@@ -81,7 +80,7 @@ bool ScIntAssignVisitor::VisitCXXOperatorCallExpr(CXXOperatorCallExpr *E) {
       "sc_int/sc_uint type '%2' is not allowed");
 
   Diag.Report(Loc, DiagID) << VarName << RHSType.getAsString()
-                            << LHSType.getAsString();
+                           << LHSType.getAsString();
 
   return true;
 }
