@@ -11,42 +11,42 @@
 
 using namespace clang;
 
-// Check whether RD is, or derives from, sc_dt::sc_int_base or
+// Check whether Record is, or derives from, sc_dt::sc_int_base or
 // sc_dt::sc_uint_base.
-bool ScIntAssignVisitor::isScIntOrUintClass(const CXXRecordDecl *RD) {
-  if (!RD)
+bool ScIntAssignVisitor::isScIntOrUintClass(const CXXRecordDecl *Record) {
+  if (!Record)
     return false;
 
   // Get the fully-qualified name for direct match.
-  std::string QualName = RD->getQualifiedNameAsString();
+  std::string QualName = Record->getQualifiedNameAsString();
   if (QualName == "sc_dt::sc_int_base" || QualName == "sc_dt::sc_uint_base")
     return true;
 
   // Check base classes recursively.
-  if (!RD->hasDefinition())
+  if (!Record->hasDefinition())
     return false;
-  for (const auto &Base : RD->bases()) {
-    const auto *BaseRD = Base.getType()->getAsCXXRecordDecl();
-    if (isScIntOrUintClass(BaseRD))
+  for (const auto &Base : Record->bases()) {
+    const auto *BaseRecord = Base.getType()->getAsCXXRecordDecl();
+    if (isScIntOrUintClass(BaseRecord))
       return true;
   }
   return false;
 }
 
-bool ScIntAssignVisitor::VisitCXXOperatorCallExpr(CXXOperatorCallExpr *E) {
+bool ScIntAssignVisitor::VisitCXXOperatorCallExpr(CXXOperatorCallExpr *Expr) {
   // Only interested in assignment operators (=, +=, -=, etc.)
-  if (!E->isAssignmentOp())
+  if (!Expr->isAssignmentOp())
     return true;
 
-  SourceManager &SM = Context.getSourceManager();
-  SourceLocation Loc = E->getOperatorLoc();
+  SourceManager &SourceMgr = Context.getSourceManager();
+  SourceLocation Loc = Expr->getOperatorLoc();
 
   // Skip assignments inside system headers (e.g. SystemC internals).
-  if (SM.isInSystemHeader(Loc))
+  if (SourceMgr.isInSystemHeader(Loc))
     return true;
 
   // The callee must be a CXXMethodDecl belonging to an sc_int/sc_uint class.
-  const auto *Method = dyn_cast_or_null<CXXMethodDecl>(E->getCalleeDecl());
+  const auto *Method = dyn_cast_or_null<CXXMethodDecl>(Expr->getCalleeDecl());
   if (!Method)
     return true;
 
@@ -55,32 +55,32 @@ bool ScIntAssignVisitor::VisitCXXOperatorCallExpr(CXXOperatorCallExpr *E) {
     return true;
 
   // Arg 0 is the implicit object (LHS). Arg 1 is the RHS value.
-  if (E->getNumArgs() < 2)
+  if (Expr->getNumArgs() < 2)
     return true;
 
-  const Expr *RHS = E->getArg(1)->IgnoreImpCasts();
-  const auto *RHSRef = dyn_cast<DeclRefExpr>(RHS);
-  if (!RHSRef)
+  const clang::Expr *Rhs = Expr->getArg(1)->IgnoreImpCasts();
+  const auto *RhsRef = dyn_cast<DeclRefExpr>(Rhs);
+  if (!RhsRef)
     return true;
 
   // Only flag when the RHS variable has a builtin type.
-  if (!RHSRef->getType()->isBuiltinType())
+  if (!RhsRef->getType()->isBuiltinType())
     return true;
 
   // Emit the warning.
   DiagnosticsEngine &Diag = Context.getDiagnostics();
 
-  std::string VarName = RHSRef->getNameInfo().getAsString();
-  QualType LHSType = E->getArg(0)->getType();
-  QualType RHSType = RHSRef->getType();
+  std::string VarName = RhsRef->getNameInfo().getAsString();
+  QualType LhsType = Expr->getArg(0)->getType();
+  QualType RhsType = RhsRef->getType();
 
-  unsigned DiagID = Diag.getCustomDiagID(
+  unsigned DiagId = Diag.getCustomDiagID(
       DiagnosticsEngine::Warning,
       "assignment of builtin-type variable '%0' (type '%1') to "
       "sc_int/sc_uint type '%2' is not allowed");
 
-  Diag.Report(Loc, DiagID) << VarName << RHSType.getAsString()
-                           << LHSType.getAsString();
+  Diag.Report(Loc, DiagId) << VarName << RhsType.getAsString()
+                           << LhsType.getAsString();
 
   return true;
 }
@@ -95,11 +95,11 @@ void ScIntAssignConsumer::HandleTranslationUnit(ASTContext &Ctx) {
 // --- PluginASTAction ---
 
 std::unique_ptr<ASTConsumer>
-ScIntAssignAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
+ScIntAssignAction::CreateASTConsumer(CompilerInstance &Ci, StringRef InFile) {
   return std::make_unique<ScIntAssignConsumer>();
 }
 
-bool ScIntAssignAction::ParseArgs(const CompilerInstance &CI,
+bool ScIntAssignAction::ParseArgs(const CompilerInstance &Ci,
                                   const std::vector<std::string> &Args) {
   return true;
 }

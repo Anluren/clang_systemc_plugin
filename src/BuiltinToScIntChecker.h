@@ -13,10 +13,10 @@ class ScIntAssignVisitor
 public:
   explicit ScIntAssignVisitor(clang::ASTContext &Context) : Context(Context) {}
 
-  bool VisitCXXOperatorCallExpr(clang::CXXOperatorCallExpr *E);
+  bool VisitCXXOperatorCallExpr(clang::CXXOperatorCallExpr *Expr);
 
 private:
-  bool isScIntOrUintClass(const clang::CXXRecordDecl *RD);
+  bool isScIntOrUintClass(const clang::CXXRecordDecl *Record);
   clang::ASTContext &Context;
 };
 
@@ -30,10 +30,10 @@ public:
 class ScIntAssignAction : public clang::PluginASTAction {
 public:
   std::unique_ptr<clang::ASTConsumer>
-  CreateASTConsumer(clang::CompilerInstance &CI,
+  CreateASTConsumer(clang::CompilerInstance &Ci,
                     llvm::StringRef InFile) override;
 
-  bool ParseArgs(const clang::CompilerInstance &CI,
+  bool ParseArgs(const clang::CompilerInstance &Ci,
                  const std::vector<std::string> &Args) override;
 
   ActionType getActionType() override { return AddBeforeMainAction; }
