@@ -1,20 +1,42 @@
 #ifndef BUILTIN_TO_SC_INT_CHECKER_H
 #define BUILTIN_TO_SC_INT_CHECKER_H
 
-#include "clang/ASTMatchers/ASTMatchFinder.h"
+#include "clang/AST/ASTConsumer.h"
+#include "clang/AST/ASTContext.h"
+#include "clang/AST/RecursiveASTVisitor.h"
+#include "clang/Frontend/FrontendAction.h"
 
-class BuiltinToScIntChecker
-    : public clang::ast_matchers::MatchFinder::MatchCallback {
+// RecursiveASTVisitor that checks for builtin-type variable assignments
+// to sc_int<W>/sc_uint<W> types.
+class ScIntAssignVisitor
+    : public clang::RecursiveASTVisitor<ScIntAssignVisitor> {
 public:
-  void run(
-      const clang::ast_matchers::MatchFinder::MatchResult &Result) override;
+  explicit ScIntAssignVisitor(clang::ASTContext &Context) : Context(Context) {}
 
-  void registerMatchers(clang::ast_matchers::MatchFinder &Finder);
-
-  unsigned getViolationCount() const { return ViolationCount; }
+  bool VisitCXXOperatorCallExpr(clang::CXXOperatorCallExpr *E);
 
 private:
-  unsigned ViolationCount = 0;
+  bool isScIntOrUintClass(const clang::CXXRecordDecl *RD);
+  clang::ASTContext &Context;
+};
+
+// ASTConsumer that drives the visitor over the translation unit.
+class ScIntAssignConsumer : public clang::ASTConsumer {
+public:
+  void HandleTranslationUnit(clang::ASTContext &Ctx) override;
+};
+
+// PluginASTAction registered with clang's plugin registry.
+class ScIntAssignAction : public clang::PluginASTAction {
+public:
+  std::unique_ptr<clang::ASTConsumer>
+  CreateASTConsumer(clang::CompilerInstance &CI,
+                    llvm::StringRef InFile) override;
+
+  bool ParseArgs(const clang::CompilerInstance &CI,
+                 const std::vector<std::string> &Args) override;
+
+  ActionType getActionType() override { return AddBeforeMainAction; }
 };
 
 #endif // BUILTIN_TO_SC_INT_CHECKER_H
