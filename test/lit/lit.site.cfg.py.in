@@ -1,0 +1,9 @@
+@LIT_SITE_CFG_IN_HEADER@
+
+config.plugin_obj_root = "@CMAKE_BINARY_DIR@"
+config.clang_binary = "@CLANG_BINARY@"
+config.plugin_path = "@CMAKE_BINARY_DIR@/libScIntAssignChecker.so"
+config.systemc_include_dir = "@SYSTEMC_INCLUDE_DIR@"
+config.filecheck_binary = "@FILECHECK_PROGRAM@"
+
+lit_config.load_config(config, "@CMAKE_CURRENT_SOURCE_DIR@/lit/lit.cfg.py")

@@ -25,6 +25,24 @@ add_custom_target(check_no_violations
   VERBATIM
 )
 
+set(SC_DT_ANNOTATOR_FLAGS
+  -std=c++17
+  -fsyntax-only
+  -Xclang -ast-dump
+  -Xclang -load -Xclang $<TARGET_FILE:ScIntAssignChecker>
+  -Xclang -add-plugin -Xclang sc-dt-type-annotator
+  -I${SYSTEMC_INCLUDE_DIR}
+)
+
+add_custom_target(check_sc_dt_annotations
+  COMMAND sh -c "${CLANG_BINARY} ${CMAKE_CURRENT_SOURCE_DIR}/test_sc_dt_annotations.cpp $<JOIN:${SC_DT_ANNOTATOR_FLAGS}, > 2>&1 | grep -q 'AnnotateAttr.*sc_dt::sc_int'"
+  COMMAND sh -c "${CLANG_BINARY} ${CMAKE_CURRENT_SOURCE_DIR}/test_sc_dt_annotations.cpp $<JOIN:${SC_DT_ANNOTATOR_FLAGS}, > 2>&1 | grep -q 'AnnotateAttr.*sc_dt::sc_uint'"
+  COMMAND sh -c "${CLANG_BINARY} ${CMAKE_CURRENT_SOURCE_DIR}/test_sc_dt_annotations.cpp $<JOIN:${SC_DT_ANNOTATOR_FLAGS}, > 2>&1 | grep -q 'AnnotateAttr.*sc_dt::sc_biguint'"
+  DEPENDS ScIntAssignChecker
+  COMMENT "Running sc_dt type annotator plugin on test_sc_dt_annotations.cpp"
+  VERBATIM
+)
+
 # ---------------------------------------------------------------------------
 # Object library per test source + test_compile_commands.json generation.
 #
@@ -81,4 +99,21 @@ endforeach()
 file(GENERATE
   OUTPUT "${CMAKE_BINARY_DIR}/test_compile_commands.json"
   CONTENT "[\n${_compdb_entries}\n]\n"
+)
+
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+find_program(FILECHECK_PROGRAM NAMES FileCheck filecheck REQUIRED)
+find_program(LIT_PROGRAM NAMES llvm-lit lit REQUIRED)
+
+configure_file(
+  ${CMAKE_CURRENT_SOURCE_DIR}/lit/lit.site.cfg.py.in
+  ${CMAKE_CURRENT_BINARY_DIR}/lit/lit.site.cfg.py
+  @ONLY
+)
+
+add_custom_target(check_lit
+  COMMAND ${LIT_PROGRAM} -sv ${CMAKE_CURRENT_BINARY_DIR}/lit
+  DEPENDS ScIntAssignChecker
+  COMMENT "Running lit/FileCheck plugin tests"
+  VERBATIM
 )

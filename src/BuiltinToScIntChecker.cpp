@@ -3,6 +3,7 @@
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprCXX.h"
+#include "clang/AST/Attr.h"
 #include "clang/AST/Type.h"
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/SourceManager.h"
@@ -104,7 +105,109 @@ bool ScIntAssignAction::ParseArgs(const CompilerInstance &Ci,
   return true;
 }
 
+// --- sc_dt type annotator visitor ---
+
+namespace {
+bool isInScDtNamespace(const DeclContext *DC) {
+  const DeclContext *Current = DC;
+  while (Current) {
+    const auto *Ns = dyn_cast<NamespaceDecl>(Current);
+    if (Ns && Ns->getName() == "sc_dt")
+      return true;
+    Current = Current->getParent();
+  }
+  return false;
+}
+} // namespace
+
+std::optional<std::string>
+ScDtTypeAnnotatorVisitor::getScDtTypeName(QualType Type) const {
+  const CXXRecordDecl *Record = Type->getAsCXXRecordDecl();
+  if (!Record)
+    return std::nullopt;
+
+  const CXXRecordDecl *CanonicalRecord = Record->getCanonicalDecl();
+  if (!CanonicalRecord)
+    return std::nullopt;
+
+  if (!isInScDtNamespace(CanonicalRecord->getDeclContext()))
+    return std::nullopt;
+
+  std::string TypeName = CanonicalRecord->getNameAsString();
+  if (TypeName.empty())
+    return std::nullopt;
+
+  return TypeName;
+}
+
+void ScDtTypeAnnotatorVisitor::maybeAnnotateDecl(NamedDecl *Decl,
+                                                 QualType Type) {
+  if (!Decl || Type.isNull())
+    return;
+
+  SourceManager &SourceMgr = Context.getSourceManager();
+  SourceLocation Loc = Decl->getLocation();
+  if (Loc.isInvalid() || SourceMgr.isInSystemHeader(Loc))
+    return;
+
+  std::optional<std::string> TypeName = getScDtTypeName(Type);
+  if (!TypeName.has_value())
+    return;
+
+  std::string Annotation = ("sc_dt::" + *TypeName);
+  for (const auto *Attr : Decl->specific_attrs<AnnotateAttr>()) {
+    if (Attr->getAnnotation() == Annotation)
+      return;
+  }
+
+  Decl->addAttr(
+      AnnotateAttr::CreateImplicit(Context, Annotation, nullptr, 0));
+}
+
+bool ScDtTypeAnnotatorVisitor::VisitVarDecl(VarDecl *Decl) {
+  maybeAnnotateDecl(Decl, Decl->getType());
+  return true;
+}
+
+bool ScDtTypeAnnotatorVisitor::VisitFieldDecl(FieldDecl *Decl) {
+  maybeAnnotateDecl(Decl, Decl->getType());
+  return true;
+}
+
+bool ScDtTypeAnnotatorVisitor::VisitParmVarDecl(ParmVarDecl *Decl) {
+  maybeAnnotateDecl(Decl, Decl->getType());
+  return true;
+}
+
+bool ScDtTypeAnnotatorVisitor::VisitTypedefNameDecl(TypedefNameDecl *Decl) {
+  maybeAnnotateDecl(Decl, Decl->getUnderlyingType());
+  return true;
+}
+
+// --- ASTConsumer ---
+
+void ScDtTypeAnnotatorConsumer::HandleTranslationUnit(ASTContext &Ctx) {
+  ScDtTypeAnnotatorVisitor Visitor(Ctx);
+  Visitor.TraverseAST(Ctx);
+}
+
+// --- PluginASTAction ---
+
+std::unique_ptr<ASTConsumer> ScDtTypeAnnotatorAction::CreateASTConsumer(
+    CompilerInstance &Ci, StringRef InFile) {
+  return std::make_unique<ScDtTypeAnnotatorConsumer>();
+}
+
+bool ScDtTypeAnnotatorAction::ParseArgs(const CompilerInstance &Ci,
+                                        const std::vector<std::string> &Args) {
+  return true;
+}
+
 // Register the plugin with clang.
 static FrontendPluginRegistry::Add<ScIntAssignAction>
     X("sc-int-assign-checker",
       "Checks builtin-type variable assignment to sc_int/sc_uint");
+
+static FrontendPluginRegistry::Add<ScDtTypeAnnotatorAction>
+    Y("sc-dt-type-annotator",
+      "Annotates declarations with sc_dt::<type> attributes");

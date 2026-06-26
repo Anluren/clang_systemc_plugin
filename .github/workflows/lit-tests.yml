@@ -1,0 +1,44 @@
+name: lit-tests
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lit:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install apt dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake \
+            ninja-build \
+            clang-17 \
+            llvm-17-dev \
+            libclang-17-dev \
+            llvm-17-tools \
+            libsystemc-dev \
+            python3-pip
+
+      - name: Install lit and filecheck wrappers
+        run: |
+          python3 -m pip install --user lit filecheck
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Configure
+        env:
+          Clang_DIR: /usr/lib/llvm-17/lib/cmake/clang
+          SYSTEMC_HOME: /usr
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+
+      - name: Build and run lit/FileCheck tests
+        run: cmake --build build --target check_lit -j$(nproc)
