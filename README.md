@@ -3,7 +3,11 @@
 This repository now contains two plugins in the same shared object:
 
 1. `sc-int-assign-checker`: Detects assignments of C++ builtin-type variables (`int`, `long`, `double`, etc.) to SystemC `sc_int<W>`/`sc_uint<W>` types, which can silently lose precision or change signedness.
-2. `sc-dt-type-annotator`: Recognizes declarations that use SystemC `sc_dt` types and adds an implicit AST annotation attribute `sc_dt::<type>` to the declaration node.
+2. `sc-dt-type-annotator`: Uses a three-pass pipeline to recognize SystemC `sc_dt` types:
+   - **Pass 1 (Collector)**: walks declarations and classifies `sc_dt` types into a shared canonical-type cache.
+   - **Pass 2 (Annotator)**: reads from the cache and optionally reports side-table entries for debugging.
+   - **Pass 3 (Lookup)**: demonstrates how later tools in the same plugin pipeline consume the cache without re-classifying.
+   Explicit `[[sc_dt::...]]` source attributes are still mapped to `AnnotateAttr` on the target declaration.
 
 ## Example
 
@@ -70,7 +74,7 @@ clang++ -Xclang -load -Xclang /path/to/libScIntAssignChecker.so \
         -I$SYSTEMC_HOME/include -std=c++17 your_file.cpp
 ```
 
-To inspect annotations in the AST:
+To inspect explicit `[[sc_dt::...]]` annotations in the AST:
 
 ```bash
 clang++ -fsyntax-only -Xclang -ast-dump \
@@ -86,6 +90,62 @@ AnnotateAttr ... "sc_dt::sc_int"
 AnnotateAttr ... "sc_dt::sc_uint"
 AnnotateAttr ... "sc_dt::sc_biguint"
 ```
+
+To dump inferred `sc_dt` side-table entries during compilation:
+
+```bash
+clang++ -fsyntax-only \
+        -Xclang -load -Xclang /path/to/libScIntAssignChecker.so \
+        -Xclang -add-plugin -Xclang sc-dt-type-annotator \
+        -Xclang -plugin-arg-sc-dt-type-annotator \
+        -Xclang report-side-table \
+        -I$SYSTEMC_HOME/include -std=c++17 your_file.cpp
+```
+
+This emits remarks like:
+
+```text
+remark: side table cached sc_dt type 'sc_dt::sc_int'
+remark: side table cached sc_dt type 'sc_dt::sc_uint'
+```
+
+### Extending the plugin with custom passes
+
+If you want to add a custom analysis pass that uses the cached `sc_dt` type information, you can follow the `ScDtTypeLookupVisitor` pattern:
+
+```cpp
+// In your analysis pass:
+class MyCustomAnalysisVisitor {
+public:
+  MyCustomAnalysisVisitor(clang::ASTContext &Context, ScDtTypeCache &Cache)
+      : Context(Context), Cache(Cache) {}
+
+  void analyzeType(clang::QualType QT) {
+    QT = Context.getCanonicalType(QT);
+    const clang::Type *TypeKey = QT.getTypePtrOrNull();
+    if (!TypeKey)
+      return;
+
+    auto It = Cache.Known.find(TypeKey);
+    if (It != Cache.Known.end()) {
+      // TypeName is the cached sc_dt type name (e.g., "sc_int", "sc_uint")
+      std::string TypeName = It->second;
+      // ... your analysis ...
+    }
+  }
+
+private:
+  clang::ASTContext &Context;
+  ScDtTypeCache &Cache;
+};
+```
+
+The `ScDtTypeCache` is owned by `ScDtTypeAnnotatorConsumer` and contains:
+- `Known`: map from canonical `clang::Type *` to type name string (e.g., `"sc_int"`)
+- `Negative`: set of canonical types that were examined but not found to be `sc_dt` types
+- `Reported`: set of types already reported (used to avoid duplicate remarks)
+
+To hook your custom pass into the consumer pipeline, add it to `ScDtTypeAnnotatorConsumer::HandleTopLevelDecl` alongside the collector and annotator visitors.
 
 You can also add explicit scoped attributes in source code and the plugin maps
 them to the same internal annotation metadata:
@@ -132,7 +192,8 @@ make check_lit             # runs lit/FileCheck tests under test/lit/
 The repository includes lit tests in `test/lit/`:
 
 - `sc_int_assign_warning.cpp`: checks warning text from `sc-int-assign-checker`
-- `sc_dt_annotations.cpp`: checks AST `AnnotateAttr` output from `sc-dt-type-annotator`
+- `sc_dt_annotations.cpp`: checks inferred side-table reporting from `sc-dt-type-annotator`
+- `sc_dt_custom_attr.cpp`: checks explicit `[[sc_dt::...]]` attributes map to `AnnotateAttr`
 
 Run from the build directory:
 
@@ -147,7 +208,9 @@ Or run lit directly using the generated site config:
 lit -sv build/test/lit
 ```
 
-## How It Works
+## Architecture
+
+### sc-int-assign-checker
 
 The plugin uses a `RecursiveASTVisitor` to walk the AST and inspect every `CXXOperatorCallExpr`. For each assignment operator, it checks:
 

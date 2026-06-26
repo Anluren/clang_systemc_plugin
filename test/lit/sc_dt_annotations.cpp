@@ -1,4 +1,4 @@
-// RUN: %clang -fsyntax-only -Xclang -ast-dump -Xclang -load -Xclang %plugin -Xclang -add-plugin -Xclang sc-dt-type-annotator -I%systemc_inc %s 2>&1 | %filecheck %s --check-prefix=ANN
+// RUN: %clang -fsyntax-only -Xclang -load -Xclang %plugin -Xclang -add-plugin -Xclang sc-dt-type-annotator -Xclang -plugin-arg-sc-dt-type-annotator -Xclang report-side-table -I%systemc_inc %s 2>&1 | %filecheck %s --check-prefix=TABLE
 
 #include <systemc.h>
 
@@ -9,13 +9,21 @@ struct Packet {
   int raw;
 };
 
+sc_int<8> produce_value(sc_uint<4> p) {
+  return sc_int<8>(p);
+}
+
+int plain_function(int x) {
+  return x;
+}
+
 void test_annotations(sc_int<8> p) {
   sc_bv<4> bits;
   (void)p;
   (void)bits;
 }
 
-// ANN: AnnotateAttr{{.*}}"sc_dt::sc_uint"
-// ANN: AnnotateAttr{{.*}}"sc_dt::sc_int"
-// ANN: AnnotateAttr{{.*}}"sc_dt::sc_bv"
-// ANN-NOT: AnnotateAttr{{.*}}"sc_dt::int"
+// TABLE: remark: side table cached sc_dt type 'sc_dt::sc_uint'
+// TABLE: remark: side table cached sc_dt type 'sc_dt::sc_int'
+// TABLE: remark: side table cached sc_dt type 'sc_dt::sc_bv'
+// TABLE-NOT: remark: side table cached sc_dt type 'sc_dt::int'

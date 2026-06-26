@@ -129,6 +129,49 @@ bool isInScDtNamespace(const DeclContext *DC) {
 } // namespace
 
 namespace {
+std::optional<std::string> classifyScDtType(ASTContext &Context,
+                                            ScDtTypeCache &Cache,
+                                            QualType Type) {
+  QualType CanonicalType = Context.getCanonicalType(Type);
+  const clang::Type *TypeKey = CanonicalType.getTypePtrOrNull();
+  if (!TypeKey)
+    return std::nullopt;
+
+  if (auto It = Cache.Known.find(TypeKey); It != Cache.Known.end())
+    return It->second;
+
+  if (Cache.Negative.contains(TypeKey))
+    return std::nullopt;
+
+  const CXXRecordDecl *Record = CanonicalType->getAsCXXRecordDecl();
+  if (!Record) {
+    Cache.Negative.insert(TypeKey);
+    return std::nullopt;
+  }
+
+  const CXXRecordDecl *CanonicalRecord = Record->getCanonicalDecl();
+  if (!CanonicalRecord) {
+    Cache.Negative.insert(TypeKey);
+    return std::nullopt;
+  }
+
+  if (!isInScDtNamespace(CanonicalRecord->getDeclContext())) {
+    Cache.Negative.insert(TypeKey);
+    return std::nullopt;
+  }
+
+  std::string TypeName = CanonicalRecord->getNameAsString();
+  if (TypeName.empty()) {
+    Cache.Negative.insert(TypeKey);
+    return std::nullopt;
+  }
+
+  Cache.Known.try_emplace(TypeKey, TypeName);
+  return TypeName;
+}
+} // namespace
+
+namespace {
 class ScDtCustomAttrInfo final : public ParsedAttrInfo {
 public:
   ScDtCustomAttrInfo() {
@@ -170,28 +213,51 @@ public:
 };
 } // namespace
 
-std::optional<std::string>
-ScDtTypeAnnotatorVisitor::getScDtTypeName(QualType Type) const {
-  const CXXRecordDecl *Record = Type->getAsCXXRecordDecl();
-  if (!Record)
-    return std::nullopt;
-
-  const CXXRecordDecl *CanonicalRecord = Record->getCanonicalDecl();
-  if (!CanonicalRecord)
-    return std::nullopt;
-
-  if (!isInScDtNamespace(CanonicalRecord->getDeclContext()))
-    return std::nullopt;
-
-  std::string TypeName = CanonicalRecord->getNameAsString();
-  if (TypeName.empty())
-    return std::nullopt;
-
-  return TypeName;
+void ScDtTypeCollectorVisitor::collectType(QualType Type) {
+  if (Type.isNull())
+    return;
+  (void)classifyScDtType(Context, Cache, Type);
 }
 
-void ScDtTypeAnnotatorVisitor::maybeAnnotateDecl(NamedDecl *Decl,
-                                                 QualType Type) {
+bool ScDtTypeCollectorVisitor::VisitVarDecl(VarDecl *Decl) {
+  collectType(Decl->getType());
+  return true;
+}
+
+bool ScDtTypeCollectorVisitor::VisitFieldDecl(FieldDecl *Decl) {
+  collectType(Decl->getType());
+  return true;
+}
+
+bool ScDtTypeCollectorVisitor::VisitParmVarDecl(ParmVarDecl *Decl) {
+  collectType(Decl->getType());
+  return true;
+}
+
+bool ScDtTypeCollectorVisitor::VisitFunctionDecl(FunctionDecl *Decl) {
+  if (!Decl)
+    return true;
+
+  collectType(Decl->getReturnType());
+  for (const ParmVarDecl *Param : Decl->parameters()) {
+    if (Param)
+      collectType(Param->getType());
+  }
+  return true;
+}
+
+bool ScDtTypeCollectorVisitor::VisitTypedefNameDecl(TypedefNameDecl *Decl) {
+  collectType(Decl->getUnderlyingType());
+  return true;
+}
+
+std::optional<std::string>
+ScDtTypeAnnotatorVisitor::getScDtTypeName(QualType Type) const {
+  return classifyScDtType(Context, Cache, Type);
+}
+
+void ScDtTypeAnnotatorVisitor::maybeRecordTypeUse(const NamedDecl *Decl,
+                                                  QualType Type) {
   if (!Decl || Type.isNull())
     return;
 
@@ -204,33 +270,124 @@ void ScDtTypeAnnotatorVisitor::maybeAnnotateDecl(NamedDecl *Decl,
   if (!TypeName.has_value())
     return;
 
-  std::string Annotation = ("sc_dt::" + *TypeName);
-  for (const auto *Attr : Decl->specific_attrs<AnnotateAttr>()) {
-    if (Attr->getAnnotation() == Annotation)
-      return;
-  }
+  if (!ReportSideTable)
+    return;
 
-  Decl->addAttr(
-      AnnotateAttr::CreateImplicit(Context, Annotation, nullptr, 0));
+  const clang::Type *TypeKey = Context.getCanonicalType(Type).getTypePtrOrNull();
+  if (!TypeKey || !Cache.Reported.insert(TypeKey).second)
+    return;
+
+  DiagnosticsEngine &Diag = Context.getDiagnostics();
+  unsigned DiagId = Diag.getCustomDiagID(
+      DiagnosticsEngine::Remark,
+      "side table cached sc_dt type '%0'");
+  Diag.Report(Loc, DiagId) << ("sc_dt::" + *TypeName);
 }
 
 bool ScDtTypeAnnotatorVisitor::VisitVarDecl(VarDecl *Decl) {
-  maybeAnnotateDecl(Decl, Decl->getType());
+  maybeRecordTypeUse(Decl, Decl->getType());
   return true;
 }
 
 bool ScDtTypeAnnotatorVisitor::VisitFieldDecl(FieldDecl *Decl) {
-  maybeAnnotateDecl(Decl, Decl->getType());
+  maybeRecordTypeUse(Decl, Decl->getType());
   return true;
 }
 
 bool ScDtTypeAnnotatorVisitor::VisitParmVarDecl(ParmVarDecl *Decl) {
-  maybeAnnotateDecl(Decl, Decl->getType());
+  maybeRecordTypeUse(Decl, Decl->getType());
+  return true;
+}
+
+bool ScDtTypeAnnotatorVisitor::VisitFunctionDecl(FunctionDecl *Decl) {
+  if (!Decl || !Decl->doesThisDeclarationHaveABody())
+    return true;
+
+  if (getScDtTypeName(Decl->getReturnType()).has_value()) {
+    maybeRecordTypeUse(Decl, Decl->getReturnType());
+    return true;
+  }
+
+  for (const ParmVarDecl *Param : Decl->parameters()) {
+    if (!Param)
+      continue;
+    if (getScDtTypeName(Param->getType()).has_value()) {
+      maybeRecordTypeUse(Decl, Param->getType());
+      return true;
+    }
+  }
+
   return true;
 }
 
 bool ScDtTypeAnnotatorVisitor::VisitTypedefNameDecl(TypedefNameDecl *Decl) {
-  maybeAnnotateDecl(Decl, Decl->getUnderlyingType());
+  maybeRecordTypeUse(Decl, Decl->getUnderlyingType());
+  return true;
+}
+
+std::optional<std::string> ScDtTypeLookupVisitor::queryCache(QualType Type) {
+  QualType CanonicalType = Context.getCanonicalType(Type);
+  const clang::Type *TypeKey = CanonicalType.getTypePtrOrNull();
+  if (!TypeKey)
+    return std::nullopt;
+
+  auto It = Cache.Known.find(TypeKey);
+  if (It != Cache.Known.end())
+    return It->second;
+
+  return std::nullopt;
+}
+
+void ScDtTypeLookupVisitor::maybeReportCacheLookup(const NamedDecl *Decl,
+                                                    QualType Type) {
+  if (!Decl || Type.isNull() || !ReportCacheLookups)
+    return;
+
+  SourceManager &SourceMgr = Context.getSourceManager();
+  SourceLocation Loc = Decl->getLocation();
+  if (Loc.isInvalid() || SourceMgr.isInSystemHeader(Loc))
+    return;
+
+  std::optional<std::string> TypeName = queryCache(Type);
+  if (!TypeName.has_value())
+    return;
+
+  DiagnosticsEngine &Diag = Context.getDiagnostics();
+  unsigned DiagId = Diag.getCustomDiagID(
+      DiagnosticsEngine::Remark,
+      "cache lookup found sc_dt type '%0'");
+  Diag.Report(Loc, DiagId) << ("sc_dt::" + *TypeName);
+}
+
+bool ScDtTypeLookupVisitor::VisitVarDecl(VarDecl *Decl) {
+  maybeReportCacheLookup(Decl, Decl->getType());
+  return true;
+}
+
+bool ScDtTypeLookupVisitor::VisitFieldDecl(FieldDecl *Decl) {
+  maybeReportCacheLookup(Decl, Decl->getType());
+  return true;
+}
+
+bool ScDtTypeLookupVisitor::VisitParmVarDecl(ParmVarDecl *Decl) {
+  maybeReportCacheLookup(Decl, Decl->getType());
+  return true;
+}
+
+bool ScDtTypeLookupVisitor::VisitFunctionDecl(FunctionDecl *Decl) {
+  if (!Decl)
+    return true;
+
+  maybeReportCacheLookup(Decl, Decl->getReturnType());
+  for (const ParmVarDecl *Param : Decl->parameters()) {
+    if (Param)
+      maybeReportCacheLookup(Param, Param->getType());
+  }
+  return true;
+}
+
+bool ScDtTypeLookupVisitor::VisitTypedefNameDecl(TypedefNameDecl *Decl) {
+  maybeReportCacheLookup(Decl, Decl->getUnderlyingType());
   return true;
 }
 
@@ -240,8 +397,17 @@ bool ScDtTypeAnnotatorConsumer::HandleTopLevelDecl(clang::DeclGroupRef DG) {
   for (Decl *D : DG) {
     if (!D)
       continue;
-    ScDtTypeAnnotatorVisitor Visitor(D->getASTContext());
+
+    ScDtTypeCollectorVisitor Collector(D->getASTContext(), Cache);
+    Collector.TraverseDecl(D);
+
+    ScDtTypeAnnotatorVisitor Visitor(D->getASTContext(), Cache,
+                                     ReportSideTable);
     Visitor.TraverseDecl(D);
+
+    ScDtTypeLookupVisitor Lookup(D->getASTContext(), Cache,
+                                 ReportCacheLookups);
+    Lookup.TraverseDecl(D);
   }
   return true;
 }
@@ -250,11 +416,28 @@ bool ScDtTypeAnnotatorConsumer::HandleTopLevelDecl(clang::DeclGroupRef DG) {
 
 std::unique_ptr<ASTConsumer> ScDtTypeAnnotatorAction::CreateASTConsumer(
     CompilerInstance &Ci, StringRef InFile) {
-  return std::make_unique<ScDtTypeAnnotatorConsumer>();
+  return std::make_unique<ScDtTypeAnnotatorConsumer>(ReportSideTable,
+                                                      ReportCacheLookups);
 }
 
 bool ScDtTypeAnnotatorAction::ParseArgs(const CompilerInstance &Ci,
                                         const std::vector<std::string> &Args) {
+  for (const std::string &Arg : Args) {
+    if (Arg == "report-side-table") {
+      ReportSideTable = true;
+      continue;
+    }
+    if (Arg == "report-cache-lookups") {
+      ReportCacheLookups = true;
+      continue;
+    }
+    DiagnosticsEngine &Diag = Ci.getDiagnostics();
+    unsigned DiagId = Diag.getCustomDiagID(
+        DiagnosticsEngine::Error,
+        "unknown sc-dt-type-annotator argument '%0'");
+    Diag.Report(DiagId) << Arg;
+    return false;
+  }
   return true;
 }
 
