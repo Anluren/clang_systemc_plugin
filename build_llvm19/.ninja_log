@@ -1,5 +1,0 @@
-# ninja log v5
-0	50750	1782436671345340148	CMakeFiles/ScIntAssignChecker.dir/src/BuiltinToScIntChecker.cpp.o	84b14f00021a517c
-50752	51001	1782436671653554102	libScIntAssignChecker.so	9fa30674316443dc
-51002	56218	0	test/CMakeFiles/check_lit	cf760542fd420832
-51002	56218	0	/home/dzheng/opensource/clang_systemc_plugin/build_llvm19/test/CMakeFiles/check_lit	cf760542fd420832

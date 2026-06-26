@@ -1,4 +1,0 @@
-5.013941e+00 sc_dt_annotations.cpp
-2.801695e-01 sc_dt_annotations_negative.cpp
-2.342544e-01 sc_dt_custom_attr.cpp
-3.339274e+00 sc_int_assign_warning.cpp
