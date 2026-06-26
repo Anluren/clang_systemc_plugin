@@ -88,9 +88,14 @@ bool ScIntAssignVisitor::VisitCXXOperatorCallExpr(CXXOperatorCallExpr *Expr) {
 
 // --- ASTConsumer ---
 
-void ScIntAssignConsumer::HandleTranslationUnit(ASTContext &Ctx) {
-  ScIntAssignVisitor Visitor(Ctx);
-  Visitor.TraverseAST(Ctx);
+bool ScIntAssignConsumer::HandleTopLevelDecl(clang::DeclGroupRef DG) {
+  for (Decl *D : DG) {
+    if (!D)
+      continue;
+    ScIntAssignVisitor Visitor(D->getASTContext());
+    Visitor.TraverseDecl(D);
+  }
+  return true;
 }
 
 // --- PluginASTAction ---
@@ -186,9 +191,14 @@ bool ScDtTypeAnnotatorVisitor::VisitTypedefNameDecl(TypedefNameDecl *Decl) {
 
 // --- ASTConsumer ---
 
-void ScDtTypeAnnotatorConsumer::HandleTranslationUnit(ASTContext &Ctx) {
-  ScDtTypeAnnotatorVisitor Visitor(Ctx);
-  Visitor.TraverseAST(Ctx);
+bool ScDtTypeAnnotatorConsumer::HandleTopLevelDecl(clang::DeclGroupRef DG) {
+  for (Decl *D : DG) {
+    if (!D)
+      continue;
+    ScDtTypeAnnotatorVisitor Visitor(D->getASTContext());
+    Visitor.TraverseDecl(D);
+  }
+  return true;
 }
 
 // --- PluginASTAction ---

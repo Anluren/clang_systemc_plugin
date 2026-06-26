@@ -3,6 +3,7 @@
 
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/ASTContext.h"
+#include "clang/AST/DeclGroup.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Frontend/FrontendAction.h"
 #include <optional>
@@ -24,7 +25,7 @@ private:
 // ASTConsumer that drives the visitor over the translation unit.
 class ScIntAssignConsumer : public clang::ASTConsumer {
 public:
-  void HandleTranslationUnit(clang::ASTContext &Ctx) override;
+  bool HandleTopLevelDecl(clang::DeclGroupRef DG) override;
 };
 
 // PluginASTAction registered with clang's plugin registry.
@@ -62,7 +63,7 @@ private:
 // ASTConsumer that drives sc_dt type annotation over the translation unit.
 class ScDtTypeAnnotatorConsumer : public clang::ASTConsumer {
 public:
-  void HandleTranslationUnit(clang::ASTContext &Ctx) override;
+  bool HandleTopLevelDecl(clang::DeclGroupRef DG) override;
 };
 
 // PluginASTAction for adding sc_dt::<type> annotations to declarations.
