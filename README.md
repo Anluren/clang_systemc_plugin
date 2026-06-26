@@ -87,6 +87,18 @@ AnnotateAttr ... "sc_dt::sc_uint"
 AnnotateAttr ... "sc_dt::sc_biguint"
 ```
 
+You can also add explicit scoped attributes in source code and the plugin maps
+them to the same internal annotation metadata:
+
+```cpp
+[[sc_dt::sc_int]] int tagged_a;
+[[sc_dt::sc_biguint]] int tagged_b;
+```
+
+Supported explicit spellings include:
+`sc_int`, `sc_uint`, `sc_bigint`, `sc_biguint`, `sc_bv`, `sc_lv`,
+`sc_fixed`, and `sc_ufixed` (all under `sc_dt::`).
+
 Use `-fsyntax-only` to check without generating object files:
 
 ```bash

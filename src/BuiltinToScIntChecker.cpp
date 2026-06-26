@@ -5,10 +5,13 @@
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/Attr.h"
 #include "clang/AST/Type.h"
+#include "clang/Basic/ParsedAttrInfo.h"
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendPluginRegistry.h"
+#include "clang/Sema/ParsedAttr.h"
+#include "clang/Sema/Sema.h"
 
 using namespace clang;
 
@@ -125,6 +128,48 @@ bool isInScDtNamespace(const DeclContext *DC) {
 }
 } // namespace
 
+namespace {
+class ScDtCustomAttrInfo final : public ParsedAttrInfo {
+public:
+  ScDtCustomAttrInfo() {
+    static constexpr Spelling SupportedSpellings[] = {
+        {AttributeCommonInfo::AS_CXX11, "sc_dt::sc_int"},
+        {AttributeCommonInfo::AS_CXX11, "sc_dt::sc_uint"},
+        {AttributeCommonInfo::AS_CXX11, "sc_dt::sc_bigint"},
+        {AttributeCommonInfo::AS_CXX11, "sc_dt::sc_biguint"},
+        {AttributeCommonInfo::AS_CXX11, "sc_dt::sc_bv"},
+        {AttributeCommonInfo::AS_CXX11, "sc_dt::sc_lv"},
+        {AttributeCommonInfo::AS_CXX11, "sc_dt::sc_fixed"},
+        {AttributeCommonInfo::AS_CXX11, "sc_dt::sc_ufixed"},
+    };
+    Spellings = SupportedSpellings;
+    NumArgs = 0;
+    OptArgs = 0;
+  }
+
+  AttrHandling handleDeclAttribute(Sema &S, Decl *D,
+                                   const ParsedAttr &Attr) const override {
+    auto *Named = dyn_cast<NamedDecl>(D);
+    if (!Named)
+      return AttributeNotApplied;
+
+    if (!Attr.checkAtMostNumArgs(S, 0))
+      return AttributeNotApplied;
+
+    std::string Annotation = Attr.getNormalizedFullName();
+
+    for (const auto *A : Named->specific_attrs<AnnotateAttr>()) {
+      if (A->getAnnotation() == Annotation)
+        return AttributeApplied;
+    }
+
+    Named->addAttr(AnnotateAttr::CreateImplicit(S.Context, Annotation, nullptr,
+                                                0));
+    return AttributeApplied;
+  }
+};
+} // namespace
+
 std::optional<std::string>
 ScDtTypeAnnotatorVisitor::getScDtTypeName(QualType Type) const {
   const CXXRecordDecl *Record = Type->getAsCXXRecordDecl();
@@ -221,3 +266,7 @@ static FrontendPluginRegistry::Add<ScIntAssignAction>
 static FrontendPluginRegistry::Add<ScDtTypeAnnotatorAction>
     Y("sc-dt-type-annotator",
       "Annotates declarations with sc_dt::<type> attributes");
+
+static ParsedAttrInfoRegistry::Add<ScDtCustomAttrInfo>
+    Z("sc-dt-custom-attr",
+      "Handles [[sc_dt::...]] attributes and maps them to annotate metadata");
